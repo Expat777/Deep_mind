@@ -45,3 +45,4 @@ class QueryOut(BaseModel):
     needs_clarification: bool
     sql: str | None = None
     rows: list[dict] | None = None
+    chart: str | None = None  # PNG-график в base64, если его просили построить
