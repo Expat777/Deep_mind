@@ -181,43 +181,34 @@ with tab_chat:
                 if msg.get("rows"):
                     st.dataframe(pd.DataFrame(msg["rows"]), use_container_width=True)
 
-        # Ввод
+        # Ввод (всегда внизу). После ответа делаем rerun, чтобы новое сообщение
+        # ушло в историю НАД полем ввода, а не рендерилось под ним.
         prompt = st.chat_input("Спросите: «Топ-3 категории по выручке» или «построй график …»")
         if prompt:
             st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            with st.chat_message("assistant"):
-                with st.spinner("Думаю…"):
-                    try:
-                        r = requests.post(
-                            f"{api}/query",
-                            json={
-                                "dataset_id": chosen["id"],
-                                "question": prompt,
-                                "session_id": st.session_state.session_id,
-                            },
-                            timeout=120,
-                        )
-                        if r.ok:
-                            d = r.json()
-                            st.markdown(d["answer"])
-                            assistant_msg = {"role": "assistant", "content": d["answer"]}
-                            if d.get("sql"):
-                                with st.expander("SQL"):
-                                    st.code(d["sql"], language="sql")
-                                assistant_msg["sql"] = d["sql"]
-                            if d.get("plot"):
-                                st.image(base64.b64decode(d["plot"]))
-                                assistant_msg["plot"] = d["plot"]
-                            if d.get("rows"):
-                                st.dataframe(
-                                    pd.DataFrame(d["rows"]), use_container_width=True
-                                )
-                                assistant_msg["rows"] = d["rows"]
-                            st.session_state.messages.append(assistant_msg)
-                        else:
-                            st.error(f"Ошибка {r.status_code}: {r.text}")
-                    except Exception as exc:  # noqa: BLE001
-                        st.error(f"Сбой запроса: {exc}")
+            with st.spinner("Думаю…"):
+                try:
+                    r = requests.post(
+                        f"{api}/query",
+                        json={
+                            "dataset_id": chosen["id"],
+                            "question": prompt,
+                            "session_id": st.session_state.session_id,
+                        },
+                        timeout=120,
+                    )
+                    if r.ok:
+                        d = r.json()
+                        assistant_msg = {"role": "assistant", "content": d["answer"]}
+                        for field in ("sql", "plot", "rows"):
+                            if d.get(field):
+                                assistant_msg[field] = d[field]
+                    else:
+                        assistant_msg = {
+                            "role": "assistant",
+                            "content": f"⚠️ Ошибка {r.status_code}: {r.text}",
+                        }
+                except Exception as exc:  # noqa: BLE001
+                    assistant_msg = {"role": "assistant", "content": f"⚠️ Сбой запроса: {exc}"}
+            st.session_state.messages.append(assistant_msg)
+            st.rerun()
