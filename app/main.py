@@ -1,7 +1,11 @@
+import logging
+
 from fastapi import FastAPI
 
 from app.api import datasets, query
 from app.db.database import Base, engine
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 # Для учебного проекта создаём таблицы при старте (без Alembic).
 Base.metadata.create_all(bind=engine)
