@@ -3,16 +3,20 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
+import logging
+
 import pandas as pd
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile
-from sqlalchemy import func, select
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, UploadFile
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.db.models import Dataset, DatasetRow
+from app.db.models import Dataset, DatasetRow, QueryLog
 from app.schemas import DatasetOut, DownloadOut, RowOut, RowsPage
-from app.storage.s3 import generate_presigned_url, upload_bytes, verify_uploaded
+from app.storage.s3 import delete_object, generate_presigned_url, upload_bytes, verify_uploaded
+
+logger = logging.getLogger("datamind.api")
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -138,3 +142,28 @@ def download_dataset(dataset_id: int, db: Session = Depends(get_db)):
     except ClientError as exc:
         raise HTTPException(status_code=502, detail=f"Ошибка генерации ссылки: {exc}")
     return DownloadOut(dataset_id=dataset_id, s3_key=dataset.s3_key, url=url, expires_in=900)
+
+
+@router.delete(
+    "/{dataset_id}",
+    status_code=204,
+    summary="Удалить датасет",
+    responses={404: {"description": "Датасет не найден"}},
+)
+def delete_dataset(dataset_id: int, db: Session = Depends(get_db)):
+    """Удаляет датасет: строки и логи из БД и исходный файл из S3."""
+    dataset = db.get(Dataset, dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Датасет не найден")
+
+    # Файл из S3 удаляем best-effort: если его уже нет — не валим запрос.
+    try:
+        delete_object(dataset.s3_key)
+    except ClientError as exc:
+        logger.warning("Не удалось удалить объект S3 '%s': %s", dataset.s3_key, exc)
+
+    # query_log ссылается на datasets без каскада — чистим явно.
+    db.execute(delete(QueryLog).where(QueryLog.dataset_id == dataset_id))
+    db.delete(dataset)  # dataset_rows удалятся каскадом (ondelete=CASCADE)
+    db.commit()
+    return Response(status_code=204)

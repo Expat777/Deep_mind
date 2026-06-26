@@ -130,6 +130,23 @@ with tab_data:
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"Ошибка: {exc}")
 
+            st.divider()
+            confirm = st.checkbox(
+                f"Подтверждаю удаление датасета #{chosen['id']} (из БД и S3)"
+            )
+            if st.button("🗑 Удалить датасет", type="primary", disabled=not confirm):
+                try:
+                    r = requests.delete(
+                        f"{api}/datasets/{chosen['id']}", timeout=30
+                    )
+                    if r.status_code == 204:
+                        st.success(f"Датасет #{chosen['id']} удалён")
+                        st.rerun()
+                    else:
+                        st.error(f"Ошибка {r.status_code}: {r.text}")
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Сбой запроса: {exc}")
+
 # === Вопрос агенту ===
 with tab_chat:
     st.header("Вопрос агенту")

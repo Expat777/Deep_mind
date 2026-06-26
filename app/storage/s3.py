@@ -47,6 +47,11 @@ def object_exists(key: str) -> bool:
         return False
 
 
+def delete_object(key: str) -> None:
+    """Удаляет объект из бакета."""
+    get_s3_client().delete_object(Bucket=settings.SELECTEL_BUCKET, Key=key)
+
+
 def generate_presigned_url(key: str, expires_in: int = 900) -> str:
     """Presigned URL на скачивание (по умолчанию 15 минут)."""
     return get_s3_client().generate_presigned_url(
