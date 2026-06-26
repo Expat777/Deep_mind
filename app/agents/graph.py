@@ -23,7 +23,9 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from app.agents.llm import clean_sql, get_llm, parse_json
-from app.agents.sql_tools import is_safe_select, run_sql
+from app.agents.plot_tools import render_bar_chart
+from app.agents.sql_tools import build_schema, is_safe_select, run_sql
+from app.db.database import SessionLocal
 
 
 class GraphState(TypedDict, total=False):
@@ -38,6 +40,7 @@ class GraphState(TypedDict, total=False):
     rows: list
     answer: str
     error: str
+    plot: str            # график в base64-PNG (если просили построить)
 
 
 def _last_question(state: GraphState) -> str:
@@ -56,6 +59,23 @@ def _history(state: GraphState) -> str:
 
 
 # --- Узлы -------------------------------------------------------------------
+
+def prepare_node(state: GraphState) -> dict:
+    """Готовит схему таблицы и SQL-проекцию по dataset_id.
+
+    В API-сценарии эндпоинт уже передаёт schema/projection — тогда узел ничего
+    не делает. В LangGraph Studio достаточно задать dataset_id, остальное узел
+    вычислит сам, обратившись к БД.
+    """
+    if state.get("schema") and state.get("projection"):
+        return {}
+    db = SessionLocal()
+    try:
+        schema, projection = build_schema(db, state["dataset_id"])
+    finally:
+        db.close()
+    return {"schema": schema, "projection": projection}
+
 
 ROUTER_SYS = """Ты — маршрутизатор запросов к таблице данных.
 Схема таблицы `data`:
@@ -114,7 +134,8 @@ def sql_node(state: GraphState) -> dict:
 
 
 SYNTH_SYS = """Ты — аналитик. По вопросу пользователя и результату SQL дай короткий,
-понятный ответ на русском. Приводи конкретные числа. Без лишних предисловий."""
+понятный ответ на русском. Приводи конкретные числа. Без лишних предисловий.
+Не вставляй ссылки и markdown-картинки — график (если нужен) формируется отдельно."""
 
 
 def synthesizer_node(state: GraphState) -> dict:
@@ -135,31 +156,64 @@ def synthesizer_node(state: GraphState) -> dict:
     return {"answer": answer, "messages": [AIMessage(answer)]}
 
 
+PLOT_KEYWORDS = ("график", "диаграм", "построй", "визуализ", "гистограм", "chart", "plot")
+
+
+def _wants_plot(state: GraphState) -> bool:
+    """Эвристика: просил ли пользователь построить график."""
+    return any(kw in _last_question(state).lower() for kw in PLOT_KEYWORDS)
+
+
+def plot_node(state: GraphState) -> dict:
+    """Инструмент plot_tool: строит график по результату SQL → base64-PNG."""
+    img = render_bar_chart(state.get("rows") or [], title=_last_question(state))
+    return {"plot": img} if img else {}
+
+
 # --- Сборка графа -----------------------------------------------------------
 
 def _route_decision(state: GraphState) -> str:
     return state.get("route", "sql")
 
 
-def build_graph():
+def _after_sql(state: GraphState) -> str:
+    """После sql_agent: если просили график и есть данные — рисуем, иначе сразу синтез."""
+    if state.get("error") or not state.get("rows"):
+        return "synthesizer"
+    return "plot_tool" if _wants_plot(state) else "synthesizer"
+
+
+def build_builder() -> StateGraph:
+    """Собирает граф (без компиляции). Используется и приложением, и Studio."""
     g = StateGraph(GraphState)
+    g.add_node("prepare", prepare_node)
     g.add_node("router", router_node)
     g.add_node("clarifier", clarifier_node)
     g.add_node("sql_agent", sql_node)
+    g.add_node("plot_tool", plot_node)
     g.add_node("synthesizer", synthesizer_node)
 
-    g.set_entry_point("router")
+    g.set_entry_point("prepare")
+    g.add_edge("prepare", "router")
     g.add_conditional_edges(
         "router",
         _route_decision,
         {"sql": "sql_agent", "clarify": "clarifier"},
     )
-    g.add_edge("sql_agent", "synthesizer")
+    g.add_conditional_edges(
+        "sql_agent",
+        _after_sql,
+        {"plot_tool": "plot_tool", "synthesizer": "synthesizer"},
+    )
+    g.add_edge("plot_tool", "synthesizer")
     g.add_edge("synthesizer", END)
     g.add_edge("clarifier", END)
+    return g
 
-    return g.compile(checkpointer=MemorySaver())
 
+# Для FastAPI: компилируем с MemorySaver (память сессий по session_id).
+graph = build_builder().compile(checkpointer=MemorySaver())
 
-# Компилируем один раз при импорте; checkpointer держит состояние сессий в памяти.
-graph = build_graph()
+# Для LangGraph Studio / `langgraph dev`: отдаём НЕскомпилированный граф —
+# dev-сервер сам добавит персистентность. Свой checkpointer тут не нужен.
+studio_graph = build_builder()

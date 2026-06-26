@@ -10,7 +10,13 @@
 
 - [x] **Часть 1 — FastAPI + SQL**: `/datasets/upload`, `/datasets`, `/datasets/{id}/rows`, таблица `query_log`
 - [x] **Часть 2 — LangGraph агенты**: `router → sql_agent → synthesizer` (+ `clarifier`), `/query`
-- [ ] **Часть 3 — Selectel S3**: загрузка в бакет, presigned URL, фоновая проверка
+- [x] **Часть 3 — Selectel S3**: загрузка в бакет, presigned URL, фоновая проверка `head_object`
+
+**Бонусы:**
+- [x] `plot_tool` — агент строит график (base64-PNG) при запросе вида «построй график …»
+- [x] Streaming-ответы — `POST /query/stream` (SSE) через `astream`
+- [x] Docker-деплой — `Dockerfile` + `docker-compose` (app + db)
+- [x] Swagger-документация с тегами, описаниями и примерами (`/docs`)
 
 ## Требования
 
@@ -41,7 +47,7 @@ createuser datamind --pwprompt        # пароль: datamind
 createdb datamind -O datamind
 ```
 
-**Вариант B — Docker:**
+**Вариант B — только БД в Docker:**
 
 ```bash
 docker compose up -d db
@@ -52,13 +58,38 @@ docker compose up -d db
 
 ## Запуск
 
+### Локально (venv)
+
 ```bash
 source .venv/bin/activate
 uvicorn app.main:app --reload
 ```
 
+### Весь стек в Docker (app + db)
+
+```bash
+cp .env.example .env   # заполнить DEEPSEEK_* и SELECTEL_*
+docker compose up --build
+```
+
+Поднимутся два контейнера: `datamind_db` (PostgreSQL) и `datamind_app` (FastAPI на :8000).
+Внутри сети compose приложение ходит в БД по хосту `db` (см. override `DATABASE_URL` в
+`docker-compose.yml`).
+
 - Swagger UI: http://localhost:8000/docs
 - Health-check: http://localhost:8000/health
+
+## Бонусы
+
+- **Графики** (`plot_tool`): добавьте в вопрос слово «построй график / диаграмму».
+  В ответе `/query` появится поле `plot` — PNG в base64.
+- **Streaming** (`POST /query/stream`): ответ приходит как Server-Sent Events, по событию
+  на каждый узел графа. Пример:
+  ```bash
+  curl -N -X POST http://localhost:8000/query/stream \
+    -H "Content-Type: application/json" \
+    -d '{"dataset_id":1,"question":"Топ-3 категории по выручке, построй график","session_id":"s1"}'
+  ```
 
 ## Эндпоинты (Часть 1)
 
@@ -67,7 +98,9 @@ uvicorn app.main:app --reload
 | `POST` | `/datasets/upload` | Загрузка CSV → строки в БД (JSONB) |
 | `GET`  | `/datasets` | Список датасетов |
 | `GET`  | `/datasets/{id}/rows?limit=&offset=` | Пагинированный просмотр строк |
+| `GET`  | `/datasets/{id}/download` | Presigned URL (15 мин) на скачивание CSV из S3 |
 | `POST` | `/query` | Вопрос на естественном языке через граф агентов |
+| `POST` | `/query/stream` | То же, но потоком (SSE) — событие на каждый узел графа |
 | `GET`  | `/health` | Проверка живости |
 
 ### Пример
@@ -107,9 +140,22 @@ curl -X POST http://localhost:8000/query \
 ## Схема БД
 
 ```sql
-datasets     (id, name, file_path, row_count, created_at)
+datasets     (id, name, s3_key, row_count, created_at)
 dataset_rows (id, dataset_id, row_data JSONB, row_index)
 query_log    (id, dataset_id, question, answer, created_at)
 ```
+
+## Selectel Object Storage (Часть 3)
+
+Исходные CSV хранятся не на диске инстанса, а в S3-бакете Selectel (поле `datasets.s3_key`).
+
+- **`POST /upload`** — после парсинга кладёт файл в бакет (`boto3.put_object`) и запускает
+  фоновую задачу (`BackgroundTasks`), которая проверяет наличие файла (`head_object`) и пишет в лог.
+- **`GET /datasets/{id}/download`** — возвращает presigned URL на 15 минут: прямая ссылка на
+  скачивание без авторизации.
+
+Клиент S3 — [app/storage/s3.py](app/storage/s3.py). Подключение через `boto3` с
+`endpoint_url`/`region_name` из `.env` (Selectel S3-совместим с AWS). Бакет и S3-ключи
+создаются в панели Selectel (сервисный пользователь → ключи доступа S3).
 
 Таблицы создаются автоматически при старте приложения (`Base.metadata.create_all`).

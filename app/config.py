@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     DEEPSEEK_MODEL: str = "deepseek-chat"
 
     # Selectel Object Storage (S3)
-    SELECTEL_ENDPOINT: str = "https://s3.selectel.ru"
+    SELECTEL_ENDPOINT: str = "https://s3.storage.selcloud.ru"
+    SELECTEL_REGION: str = "ru-1"
     SELECTEL_ACCESS_KEY: str = ""
     SELECTEL_SECRET_KEY: str = ""
     SELECTEL_BUCKET: str = "datamind-files"
