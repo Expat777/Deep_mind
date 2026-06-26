@@ -115,7 +115,9 @@ def clarifier_node(state: GraphState) -> dict:
 SQL_SYS = """Ты — SQL-аналитик. Есть таблица PostgreSQL `data` со столбцами:
 {schema}
 
-Напиши ОДИН SQL-запрос (только SELECT), отвечающий на вопрос пользователя.
+Тебе дан весь диалог с пользователем. Пойми, какие данные он в итоге хочет —
+учитывай уточнения и предыдущие реплики (например, ответы вроде «давай», «в виде
+изображения» относятся к ранее заданному вопросу). Напиши ОДИН SQL-запрос (только SELECT).
 Правила:
 - обращайся только к таблице `data`;
 - не используй CTE/WITH, точку с запятой и любые изменяющие данные команды;
@@ -126,7 +128,7 @@ def sql_node(state: GraphState) -> dict:
     llm = get_llm()
     resp = llm.invoke([
         SystemMessage(SQL_SYS.format(schema=state["schema"])),
-        HumanMessage(_last_question(state)),
+        HumanMessage(f"Диалог:\n{_history(state)}"),
     ])
     sql = clean_sql(resp.content)
     if not is_safe_select(sql):
@@ -152,9 +154,10 @@ def synthesizer_node(state: GraphState) -> dict:
     resp = llm.invoke([
         SystemMessage(SYNTH_SYS),
         HumanMessage(
-            f"Вопрос: {_last_question(state)}\n"
-            f"SQL: {state.get('sql')}\n"
-            f"Результат (JSON): {state.get('rows')}"
+            f"Диалог с пользователем:\n{_history(state)}\n\n"
+            f"Выполненный SQL: {state.get('sql')}\n"
+            f"Результат (JSON): {state.get('rows')}\n\n"
+            f"Сформулируй ответ на то, что пользователь в итоге хочет узнать."
         ),
     ])
     answer = resp.content.strip()
@@ -174,8 +177,9 @@ def _wants_plot(state: GraphState) -> bool:
 
 
 def plot_node(state: GraphState) -> dict:
-    """Инструмент plot_tool: строит график по результату SQL → base64-PNG."""
-    img = render_bar_chart(state.get("rows") or [], title=_last_question(state))
+    """Инструмент plot_tool: строит график по результату SQL → base64-PNG.
+    Заголовок генерируется по самим данным (см. render_bar_chart), а не по тексту вопроса."""
+    img = render_bar_chart(state.get("rows") or [])
     return {"plot": img} if img else {}
 
 

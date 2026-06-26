@@ -19,9 +19,16 @@ def _as_number(value):
         return None
 
 
-def render_bar_chart(rows: list[dict], title: str = "") -> str | None:
+def _pretty(name: str) -> str:
+    """Делает имя столбца человекочитаемым: order_count -> «Order count»."""
+    return name.replace("_", " ").strip().capitalize()
+
+
+def render_bar_chart(rows: list[dict], title: str | None = None) -> str | None:
     """Строит столбчатую диаграмму: ось X — первый текстовый столбец,
-    ось Y — первый числовой. Возвращает PNG в base64 (без data-URI префикса)."""
+    ось Y — первый числовой. Возвращает PNG в base64 (без data-URI префикса).
+
+    Если title не задан — формируется по данным («<метрика> по <разрез>»)."""
     if not rows:
         return None
 
@@ -33,12 +40,14 @@ def render_bar_chart(rows: list[dict], title: str = "") -> str | None:
     labels = [str(r.get(x_col)) for r in rows]
     values = [_as_number(r.get(y_col)) or 0 for r in rows]
 
+    if not title:
+        title = f"{_pretty(y_col)} по «{_pretty(x_col)}»"
+
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.bar(labels, values, color="#4C72B0")
-    ax.set_xlabel(x_col)
-    ax.set_ylabel(y_col)
-    if title:
-        ax.set_title(title[:80])
+    ax.set_xlabel(_pretty(x_col))
+    ax.set_ylabel(_pretty(y_col))
+    ax.set_title(title[:80])
     plt.xticks(rotation=30, ha="right")
     fig.tight_layout()
 
