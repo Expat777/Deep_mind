@@ -37,8 +37,10 @@ with st.sidebar:
 
     # Индикатор доступности API
     try:
-        ok = requests.get(f"{api}/health", timeout=5).ok
-        st.success("API доступен") if ok else st.error("API вернул ошибку")
+        if requests.get(f"{api}/health", timeout=5).ok:
+            st.success("API доступен")
+        else:
+            st.error("API вернул ошибку")
     except Exception:
         st.error("Нет связи с API")
     st.caption(f"Swagger: {api}/docs")
