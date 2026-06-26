@@ -6,3 +6,4 @@ venv/
 data/uploads/
 *.sqlite3
 .DS_Store
+*.log

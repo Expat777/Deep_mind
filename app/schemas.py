@@ -6,10 +6,18 @@ from pydantic import BaseModel
 class DatasetOut(BaseModel):
     id: int
     name: str
+    s3_key: str | None = None
     row_count: int
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class DownloadOut(BaseModel):
+    dataset_id: int
+    s3_key: str
+    url: str
+    expires_in: int
 
 
 class RowOut(BaseModel):
@@ -37,3 +45,4 @@ class QueryOut(BaseModel):
     needs_clarification: bool
     sql: str | None = None
     rows: list[dict] | None = None
+    chart: str | None = None  # PNG-график в base64, если его просили построить

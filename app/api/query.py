@@ -53,4 +53,5 @@ def query(payload: QueryIn, db: Session = Depends(get_db)):
         needs_clarification=needs_clarification,
         sql=final.get("sql"),
         rows=json_safe(final.get("rows")) if final.get("rows") else None,
+        chart=final.get("chart"),
     )
