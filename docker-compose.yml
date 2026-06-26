@@ -18,11 +18,11 @@ services:
       retries: 5
 
   app:
-    build: .
+    build: ./backend
     container_name: datamind_app
     restart: unless-stopped
-    # Секреты (DEEPSEEK_*, SELECTEL_*) берутся из .env
-    env_file: .env
+    # Секреты (DEEPSEEK_*, SELECTEL_*) берутся из backend/.env
+    env_file: backend/.env
     # Внутри сети compose БД доступна по хосту `db`, поэтому переопределяем DATABASE_URL
     environment:
       DATABASE_URL: postgresql+psycopg2://datamind:datamind@db:5432/datamind

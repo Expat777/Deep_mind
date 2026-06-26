@@ -18,21 +18,38 @@
 - [x] Docker-деплой — `Dockerfile` + `docker-compose` (app + db)
 - [x] Swagger-документация с тегами, описаниями и примерами (`/docs`)
 
+## Структура проекта
+
+```
+Deep_mind/
+├── backend/              # FastAPI + агенты + S3 (всё для API)
+│   ├── app/              # api/ · agents/ · db/ · storage/ · main.py
+│   ├── data/             # тестовый orders.csv
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── langgraph.json    # конфиг LangGraph Studio
+│   └── .env / .env.example
+├── frontend/             # Streamlit-клиент (деплой на Streamlit Cloud)
+├── docker-compose.yml    # оркестрация app + db (билдит ./backend)
+├── README.md
+└── phase3_README.md      # исходное задание
+```
+
 ## Требования
 
 - Python 3.11+
 - PostgreSQL 16 (локально через Homebrew или Docker)
 
-## Установка
+## Установка (бэкенд)
 
 ```bash
 # 1. Виртуальное окружение + зависимости
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 
 # 2. Переменные окружения
-cp .env.example .env
+cp backend/.env.example backend/.env
 # заполнить DEEPSEEK_API_KEY и (для Части 3) ключи Selectel
 ```
 
@@ -53,7 +70,7 @@ createdb datamind -O datamind
 docker compose up -d db
 ```
 
-В обоих случаях `DATABASE_URL` в `.env` уже настроен на
+В обоих случаях `DATABASE_URL` в `backend/.env` уже настроен на
 `postgresql+psycopg2://datamind:datamind@localhost:5432/datamind`.
 
 ## Запуск
@@ -62,14 +79,14 @@ docker compose up -d db
 
 ```bash
 source .venv/bin/activate
-uvicorn app.main:app --reload
+cd backend && uvicorn app.main:app --reload
 ```
 
 ### Весь стек в Docker (app + db)
 
 ```bash
-cp .env.example .env   # заполнить DEEPSEEK_* и SELECTEL_*
-docker compose up --build
+cp backend/.env.example backend/.env   # заполнить DEEPSEEK_* и SELECTEL_*
+docker compose up --build              # из корня проекта
 ```
 
 Поднимутся два контейнера: `datamind_db` (PostgreSQL) и `datamind_app` (FastAPI на :8000).
