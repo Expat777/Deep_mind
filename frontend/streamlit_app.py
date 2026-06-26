@@ -1,9 +1,13 @@
-"""Streamlit-фронтенд для DataMind.
+"""Streamlit-фронтенд для DataMind (для деплоя на Streamlit Community Cloud).
 
 Тонкий UI поверх FastAPI: ничего не считает сам, только дёргает REST-эндпоинты
-бэкенда через HTTP. Адрес API берётся из переменной окружения API_URL
-(по умолчанию http://localhost:8000) — поэтому тот же файл работает и локально,
-и на сервере: достаточно поменять API_URL.
+бэкенда через HTTP. Запросы идут server-side (через requests), поэтому CORS
+на бэкенде не нужен.
+
+Адрес API берётся (по приоритету):
+  1) st.secrets["API_URL"]      — задаётся в настройках Streamlit Cloud (Secrets);
+  2) переменная окружения API_URL — для локального запуска / Docker;
+  3) http://localhost:8000      — дефолт.
 """
 
 import base64
@@ -13,7 +17,17 @@ import uuid
 import requests
 import streamlit as st
 
-API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+
+def _resolve_api_url() -> str:
+    try:
+        if "API_URL" in st.secrets:
+            return str(st.secrets["API_URL"])
+    except Exception:  # noqa: BLE001 — secrets может отсутствовать локально
+        pass
+    return os.getenv("API_URL", "http://localhost:8000")
+
+
+API_URL = _resolve_api_url().rstrip("/")
 TIMEOUT = 120  # /query с LLM может думать долго
 
 st.set_page_config(page_title="DataMind", page_icon="🤖", layout="wide")
@@ -144,7 +158,8 @@ with tab_data:
 with tab_chat:
     st.caption(
         "Задайте вопрос на естественном языке. Если он неоднозначен — система "
-        "переспросит (clarifier), и контекст сохранится в рамках session_id."
+        "переспросит (clarifier), и контекст сохранится в рамках session_id. "
+        "Попросите «построй график …» — вернётся диаграмма."
     )
 
     # история диалога
