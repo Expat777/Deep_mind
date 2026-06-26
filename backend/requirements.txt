@@ -15,9 +15,5 @@ langchain-openai==0.2.14
 # --- Часть 3: Selectel S3 ---
 boto3==1.35.90
 
-# --- UI: Streamlit-фронтенд ---
-streamlit==1.41.1
-requests==2.32.3
-
-# --- Графики (plot_tool) ---
-matplotlib==3.10.0
+# --- Бонусы: графики (plot_tool) ---
+matplotlib==3.11.0

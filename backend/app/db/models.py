@@ -16,8 +16,7 @@ class Dataset(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
-    # Ключ объекта в Selectel S3 (None, если хранилище выключено).
-    s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    s3_key: Mapped[str] = mapped_column(String(512))
     row_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

@@ -1,213 +1,214 @@
-"""Streamlit-фронтенд для DataMind (для деплоя на Streamlit Community Cloud).
+"""DataMind — Streamlit-фронтенд к API (FastAPI на Selectel).
 
-Тонкий UI поверх FastAPI: ничего не считает сам, только дёргает REST-эндпоинты
-бэкенда через HTTP. Запросы идут server-side (через requests), поэтому CORS
-на бэкенде не нужен.
-
-Адрес API берётся (по приоритету):
-  1) st.secrets["API_URL"]      — задаётся в настройках Streamlit Cloud (Secrets);
-  2) переменная окружения API_URL — для локального запуска / Docker;
-  3) http://localhost:8000      — дефолт.
+Запускается на Streamlit Community Cloud, ходит к удалённому API по HTTP.
+Адрес API берётся из st.secrets["API_URL"] (можно задать в настройках приложения)
+или из поля в сайдбаре.
 """
 
 import base64
-import os
-import uuid
 
+import pandas as pd
 import requests
 import streamlit as st
 
-
-def _resolve_api_url() -> str:
-    try:
-        if "API_URL" in st.secrets:
-            return str(st.secrets["API_URL"])
-    except Exception:  # noqa: BLE001 — secrets может отсутствовать локально
-        pass
-    return os.getenv("API_URL", "http://localhost:8000")
-
-
-API_URL = _resolve_api_url().rstrip("/")
-TIMEOUT = 120  # /query с LLM может думать долго
+DEFAULT_API_URL = "http://161.104.48.96:8000"
 
 st.set_page_config(page_title="DataMind", page_icon="🤖", layout="wide")
 
 
-# --- helpers ----------------------------------------------------------------
+# --- Настройки / адрес API --------------------------------------------------
 
-def api_get(path: str, **params):
-    r = requests.get(f"{API_URL}{path}", params=params, timeout=TIMEOUT)
-    r.raise_for_status()
-    return r.json()
-
-
-def api_post_file(path: str, file) -> dict:
-    files = {"file": (file.name, file.getvalue(), "text/csv")}
-    r = requests.post(f"{API_URL}{path}", files=files, timeout=TIMEOUT)
-    if not r.ok:
-        raise RuntimeError(r.json().get("detail", r.text))
-    return r.json()
+def _default_api() -> str:
+    try:
+        return st.secrets["API_URL"]
+    except Exception:
+        return DEFAULT_API_URL
 
 
-def api_post_json(path: str, payload: dict) -> dict:
-    r = requests.post(f"{API_URL}{path}", json=payload, timeout=TIMEOUT)
-    if not r.ok:
-        raise RuntimeError(r.json().get("detail", r.text))
-    return r.json()
-
-
-@st.cache_data(ttl=10)
-def fetch_datasets():
-    return api_get("/datasets")
-
-
-# --- session state ----------------------------------------------------------
-
-if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())[:8]
-if "chat" not in st.session_state:
-    st.session_state.chat = []  # список (role, text, meta)
-
-
-# --- sidebar ----------------------------------------------------------------
+if "api_url" not in st.session_state:
+    st.session_state.api_url = _default_api()
 
 with st.sidebar:
     st.title("🤖 DataMind")
-    st.caption("UI поверх FastAPI + LangGraph + Selectel S3")
+    st.session_state.api_url = st.text_input(
+        "API URL", value=st.session_state.api_url
+    ).rstrip("/")
+    api = st.session_state.api_url
 
-    # Health-check бэкенда
+    # Индикатор доступности API
     try:
-        api_get("/health")
-        st.success(f"API доступен: {API_URL}")
+        if requests.get(f"{api}/health", timeout=5).ok:
+            st.success("API доступен")
+        else:
+            st.error("API вернул ошибку")
+    except Exception:
+        st.error("Нет связи с API")
+    st.caption(f"Swagger: {api}/docs")
+
+
+# --- Хелперы ----------------------------------------------------------------
+
+def fetch_datasets() -> list[dict]:
+    try:
+        r = requests.get(f"{api}/datasets", timeout=15)
+        r.raise_for_status()
+        return r.json()
     except Exception as exc:  # noqa: BLE001
-        st.error(f"API недоступен ({API_URL}): {exc}")
-        st.stop()
-
-    st.divider()
-    st.subheader("📤 Загрузка CSV")
-    up = st.file_uploader("CSV-файл", type=["csv"])
-    if up and st.button("Загрузить", use_container_width=True):
-        try:
-            res = api_post_file("/datasets/upload", up)
-            st.success(f"Загружено: id={res['id']}, строк={res['row_count']}")
-            if res.get("s3_key"):
-                st.caption(f"В S3: {res['s3_key']}")
-            else:
-                st.warning("Файл не ушёл в S3 (хранилище не настроено)")
-            fetch_datasets.clear()
-        except Exception as exc:  # noqa: BLE001
-            st.error(f"Ошибка загрузки: {exc}")
-
-    st.divider()
-    st.caption(f"session_id: `{st.session_state.session_id}`")
-    if st.button("🔄 Новый диалог", use_container_width=True):
-        st.session_state.session_id = str(uuid.uuid4())[:8]
-        st.session_state.chat = []
-        st.rerun()
+        st.error(f"Не удалось получить список датасетов: {exc}")
+        return []
 
 
-# --- выбор датасета ---------------------------------------------------------
-
-try:
-    datasets = fetch_datasets()
-except Exception as exc:  # noqa: BLE001
-    st.error(f"Не удалось получить список датасетов: {exc}")
-    st.stop()
-
-if not datasets:
-    st.info("Пока нет датасетов. Загрузите CSV в боковой панели слева.")
-    st.stop()
-
-labels = {f"#{d['id']} · {d['name']} ({d['row_count']} строк)": d for d in datasets}
-choice = st.selectbox("Датасет", list(labels.keys()))
-ds = labels[choice]
-dataset_id = ds["id"]
+def dataset_label(d: dict) -> str:
+    return f"#{d['id']} · {d['name']} ({d['row_count']} строк)"
 
 
-tab_data, tab_chat = st.tabs(["📊 Данные", "💬 Вопросы"])
+# --- Вкладки ----------------------------------------------------------------
 
+tab_upload, tab_data, tab_chat = st.tabs(
+    ["📤 Загрузка", "📊 Датасеты", "💬 Вопрос агенту"]
+)
 
-# --- вкладка: просмотр данных + скачивание -----------------------------------
-
-with tab_data:
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        limit = st.slider("Сколько строк показать", 5, 200, 20)
-    with col2:
-        st.write("")
-        st.write("")
-        if st.button("🔗 Получить ссылку на скачивание (S3)"):
+# === Загрузка ===
+with tab_upload:
+    st.header("Загрузка CSV")
+    st.write("Файл сохраняется в БД и в Selectel S3 на стороне API.")
+    uploaded = st.file_uploader("Выберите CSV-файл", type=["csv"])
+    if uploaded and st.button("Загрузить", type="primary"):
+        with st.spinner("Загружаем…"):
             try:
-                dl = api_get(f"/datasets/{dataset_id}/download")
-                st.success("Presigned URL (действует 15 минут):")
-                st.markdown(f"[Скачать {ds['name']}]({dl['url']})")
-                st.code(dl["url"], language="text")
+                files = {"file": (uploaded.name, uploaded.getvalue(), "text/csv")}
+                r = requests.post(f"{api}/datasets/upload", files=files, timeout=60)
+                if r.ok:
+                    d = r.json()
+                    st.success(f"Готово! Датасет #{d['id']} · {d['row_count']} строк")
+                else:
+                    st.error(f"Ошибка {r.status_code}: {r.text}")
             except Exception as exc:  # noqa: BLE001
-                st.error(f"Ошибка: {exc}")
+                st.error(f"Сбой запроса: {exc}")
 
-    try:
-        page = api_get(f"/datasets/{dataset_id}/rows", limit=limit, offset=0)
-        st.caption(f"Всего строк: {page['total']}")
-        st.dataframe([r["row_data"] for r in page["rows"]], use_container_width=True)
-    except Exception as exc:  # noqa: BLE001
-        st.error(f"Ошибка чтения строк: {exc}")
+# === Датасеты ===
+with tab_data:
+    st.header("Загруженные датасеты")
+    datasets = fetch_datasets()
+    if not datasets:
+        st.info("Пока нет датасетов — загрузите CSV на вкладке «Загрузка».")
+    else:
+        st.dataframe(datasets, use_container_width=True, hide_index=True)
+        chosen = st.selectbox(
+            "Датасет для просмотра", datasets, format_func=dataset_label
+        )
+        if chosen:
+            col1, col2 = st.columns(2)
+            limit = col1.number_input("limit", 1, 1000, 50)
+            offset = col2.number_input("offset", 0, 10_000, 0, step=10)
+            if st.button("Показать строки"):
+                try:
+                    r = requests.get(
+                        f"{api}/datasets/{chosen['id']}/rows",
+                        params={"limit": limit, "offset": offset},
+                        timeout=30,
+                    )
+                    r.raise_for_status()
+                    page = r.json()
+                    rows = [row["row_data"] for row in page["rows"]]
+                    st.caption(f"Всего строк: {page['total']}")
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Ошибка: {exc}")
 
+            if st.button("Получить ссылку на скачивание (S3)"):
+                try:
+                    r = requests.get(
+                        f"{api}/datasets/{chosen['id']}/download", timeout=30
+                    )
+                    r.raise_for_status()
+                    info = r.json()
+                    st.link_button(
+                        "⬇️ Скачать CSV (ссылка на 15 минут)", info["url"]
+                    )
+                    st.code(info["s3_key"], language="text")
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Ошибка: {exc}")
 
-# --- вкладка: чат с графом агентов -------------------------------------------
+            st.divider()
+            confirm = st.checkbox(
+                f"Подтверждаю удаление датасета #{chosen['id']} (из БД и S3)"
+            )
+            if st.button("🗑 Удалить датасет", type="primary", disabled=not confirm):
+                try:
+                    r = requests.delete(
+                        f"{api}/datasets/{chosen['id']}", timeout=30
+                    )
+                    if r.status_code == 204:
+                        st.success(f"Датасет #{chosen['id']} удалён")
+                        st.rerun()
+                    else:
+                        st.error(f"Ошибка {r.status_code}: {r.text}")
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Сбой запроса: {exc}")
 
+# === Вопрос агенту ===
 with tab_chat:
-    st.caption(
-        "Задайте вопрос на естественном языке. Если он неоднозначен — система "
-        "переспросит (clarifier), и контекст сохранится в рамках session_id. "
-        "Попросите «построй график …» — вернётся диаграмма."
-    )
+    st.header("Вопрос агенту")
+    datasets = fetch_datasets()
+    if not datasets:
+        st.info("Сначала загрузите датасет.")
+    else:
+        chosen = st.selectbox(
+            "Датасет", datasets, format_func=dataset_label, key="chat_ds"
+        )
 
-    # история диалога
-    for role, text, meta in st.session_state.chat:
-        with st.chat_message(role):
-            st.markdown(text)
-            if meta and meta.get("chart"):
-                st.image(base64.b64decode(meta["chart"]), use_container_width=True)
-            if meta and meta.get("sql"):
-                with st.expander("SQL и данные"):
-                    st.code(meta["sql"], language="sql")
-                    if meta.get("rows"):
-                        st.dataframe(meta["rows"], use_container_width=True)
+        # История диалога и session_id (для clarifier)
+        st.session_state.setdefault("messages", [])
+        st.session_state.setdefault("session_id", "st-" + str(id(st.session_state)))
 
-    prompt = st.chat_input("Например: Топ-3 категории по выручке")
-    if prompt:
-        st.session_state.chat.append(("user", prompt, None))
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        with st.chat_message("assistant"):
+        c1, c2 = st.columns([3, 1])
+        c1.caption(f"session_id: `{st.session_state.session_id}`")
+        if c2.button("🗑 Новый диалог"):
+            st.session_state.messages = []
+            st.session_state.session_id = "st-" + str(pd.Timestamp.now().value)
+            st.rerun()
+
+        # Показ истории
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+                if msg.get("sql"):
+                    with st.expander("SQL"):
+                        st.code(msg["sql"], language="sql")
+                if msg.get("plot"):
+                    st.image(base64.b64decode(msg["plot"]))
+                if msg.get("rows"):
+                    st.dataframe(pd.DataFrame(msg["rows"]), use_container_width=True)
+
+        # Ввод (всегда внизу). После ответа делаем rerun, чтобы новое сообщение
+        # ушло в историю НАД полем ввода, а не рендерилось под ним.
+        prompt = st.chat_input("Спросите: «Топ-3 категории по выручке» или «построй график …»")
+        if prompt:
+            st.session_state.messages.append({"role": "user", "content": prompt})
             with st.spinner("Думаю…"):
                 try:
-                    res = api_post_json(
-                        "/query",
-                        {
-                            "dataset_id": dataset_id,
+                    r = requests.post(
+                        f"{api}/query",
+                        json={
+                            "dataset_id": chosen["id"],
                             "question": prompt,
                             "session_id": st.session_state.session_id,
                         },
+                        timeout=120,
                     )
-                    answer = res.get("answer", "(пустой ответ)")
-                    if res.get("needs_clarification"):
-                        answer = f"❓ {answer}"
-                    st.markdown(answer)
-                    meta = {
-                        "sql": res.get("sql"),
-                        "rows": res.get("rows"),
-                        "chart": res.get("chart"),
-                    }
-                    if meta["chart"]:
-                        st.image(base64.b64decode(meta["chart"]), use_container_width=True)
-                    if meta["sql"]:
-                        with st.expander("SQL и данные"):
-                            st.code(meta["sql"], language="sql")
-                            if meta["rows"]:
-                                st.dataframe(meta["rows"], use_container_width=True)
-                    st.session_state.chat.append(("assistant", answer, meta))
+                    if r.ok:
+                        d = r.json()
+                        assistant_msg = {"role": "assistant", "content": d["answer"]}
+                        for field in ("sql", "plot", "rows"):
+                            if d.get(field):
+                                assistant_msg[field] = d[field]
+                    else:
+                        assistant_msg = {
+                            "role": "assistant",
+                            "content": f"⚠️ Ошибка {r.status_code}: {r.text}",
+                        }
                 except Exception as exc:  # noqa: BLE001
-                    err = f"Ошибка: {exc}"
-                    st.error(err)
-                    st.session_state.chat.append(("assistant", err, None))
+                    assistant_msg = {"role": "assistant", "content": f"⚠️ Сбой запроса: {exc}"}
+            st.session_state.messages.append(assistant_msg)
+            st.rerun()

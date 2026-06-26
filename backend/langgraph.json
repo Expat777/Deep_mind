@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "datamind": "./app/agents/graph.py:studio_graph"
+  },
+  "env": ".env"
+}

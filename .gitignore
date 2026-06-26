@@ -3,8 +3,7 @@ __pycache__/
 .venv/
 venv/
 .env
-data/uploads/
+backend/data/uploads/
 *.sqlite3
 .DS_Store
-*.log
-.streamlit/secrets.toml
+.langgraph_api/

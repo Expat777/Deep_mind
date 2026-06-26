@@ -4,7 +4,7 @@ __pycache__/
 *.pyc
 .git/
 .env
-*.log
 data/uploads/
+*.sqlite3
 .DS_Store
-.streamlit/
+.langgraph_api/

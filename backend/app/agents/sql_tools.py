@@ -37,17 +37,6 @@ def _infer_type(values: list) -> str:
     return "text"
 
 
-def _distinct_values(db: Session, dataset_id: int, col: str, limit: int = 31) -> list[str]:
-    """Уникальные значения текстовой колонки (для подсказки LLM реальных написаний)."""
-    sql = text(
-        "SELECT DISTINCT row_data->>:col AS v FROM dataset_rows "
-        "WHERE dataset_id = :ds AND row_data->>:col IS NOT NULL "
-        "ORDER BY v LIMIT :lim"
-    )
-    rows = db.execute(sql, {"col": col, "ds": dataset_id, "lim": limit}).scalars().all()
-    return [str(v) for v in rows]
-
-
 def build_schema(db: Session, dataset_id: int) -> tuple[str, str]:
     """Возвращает (текстовое описание схемы для LLM, SQL-проекцию CTE `data`)."""
     rows = db.scalars(
@@ -75,16 +64,7 @@ def build_schema(db: Session, dataset_id: int) -> tuple[str, str]:
             expr = f"row_data->>'{key}'"
 
         selects.append(f"{expr} AS {alias}")
-
-        line = f"- {col} ({col_type})"
-        # Для текстовых колонок с небольшим числом уникальных значений показываем их
-        # LLM целиком — чтобы он сопоставлял слова пользователя (любой падеж/регистр)
-        # с реальными значениями в данных (напр. «казани» → 'Казань').
-        if col_type == "text":
-            distinct = _distinct_values(db, dataset_id, col, limit=31)
-            if distinct and len(distinct) <= 30:
-                line += f"; возможные значения: {', '.join(distinct)}"
-        descr.append(line)
+        descr.append(f"- {col} ({col_type})")
 
     projection = (
         f"SELECT {', '.join(selects)} "

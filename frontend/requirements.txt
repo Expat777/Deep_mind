@@ -1,5 +1,3 @@
-# Зависимости ТОЛЬКО для UI на Streamlit Community Cloud.
-# Бэкенд (FastAPI, БД, LangGraph) сюда не входит — он живёт на VPS.
-# Графики приходят с бэкенда готовым PNG (base64), поэтому matplotlib здесь не нужен.
-streamlit==1.41.1
-requests==2.32.3
+streamlit>=1.41
+requests>=2.31
+pandas>=2.2
